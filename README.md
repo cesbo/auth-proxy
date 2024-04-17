@@ -1,6 +1,6 @@
 # Auth Proxy
 
-Auth Proxy for HTTP authorization with multiply backends.
+Auth Proxy for HTTP Authorization with multiply backends.
 
 ## Config
 

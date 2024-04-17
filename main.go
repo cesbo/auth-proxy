@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 )
 
 type App struct {
@@ -13,49 +14,76 @@ type App struct {
 }
 
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if err := a.Backend.Do(r.Context(), r); err != nil {
-		w.WriteHeader(http.StatusForbidden)
-	} else {
+	if a.Backend.Check(r) {
 		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusForbidden)
 	}
 }
 
-func (a *App) load() error {
-	configPath := os.Args[1]
-	if configPath == "" {
-		configPath = "/etc/auth-proxy.conf"
-	}
-
-	file, err := os.Open(configPath)
+func (a *App) load(path string) error {
+	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	config := &App{}
-	if err := json.NewDecoder(file).Decode(config); err != nil {
+	if err := json.NewDecoder(file).Decode(a); err != nil {
 		return err
 	}
 
-	if config.Listen == "" {
-		config.Listen = ":1064"
+	if a.Listen == "" {
+		a.Listen = ":1064"
 	}
 
 	return nil
 }
 
-func start() error {
+func start(path string) error {
 	app := &App{}
 
-	if err := app.load(); err != nil {
+	if err := app.load(path); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 
-	return http.ListenAndServe(app.Listen, app)
+	signalCh := make(chan os.Signal, 1)
+	signal.Notify(signalCh, os.Interrupt)
+
+	server := http.Server{
+		Addr:    app.Listen,
+		Handler: app,
+	}
+
+	go func() {
+		<-signalCh
+		server.Close()
+	}()
+
+	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+		return err
+	}
+
+	return nil
 }
 
 func main() {
-	if err := start(); err != nil {
+	configPath := "/etc/auth-proxy.conf"
+
+	if len(os.Args) > 1 {
+		configPath = os.Args[1]
+
+		switch configPath {
+		case "help", "-h", "--help":
+			fmt.Fprintf(os.Stdout, "Usage: %s [config]\n", os.Args[0])
+			os.Exit(0)
+
+		case "version", "-v", "--version":
+			fmt.Fprintf(os.Stdout, "Auth Proxy v0\n")
+			os.Exit(0)
+		}
+	}
+
+	if err := start(configPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		os.Exit(1)
 	}

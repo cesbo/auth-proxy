@@ -22,16 +22,15 @@ var backendClient = &http.Client{
 	Transport: &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
-			Timeout:   3 * time.Second,
+			Timeout:   5 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		TLSHandshakeTimeout:    2 * time.Second,
+		TLSHandshakeTimeout:    3 * time.Second,
 		MaxIdleConns:           0,
 		MaxIdleConnsPerHost:    4,
 		MaxConnsPerHost:        0,
 		IdleConnTimeout:        90 * time.Second,
 		ResponseHeaderTimeout:  2 * time.Second,
-		ExpectContinueTimeout:  1 * time.Second,
 		MaxResponseHeaderBytes: 2 * 1024,
 		ForceAttemptHTTP2:      true,
 	},
@@ -105,8 +104,8 @@ func (b *Backend) Do(ctx context.Context, r *http.Request) error {
 	return nil
 }
 
-func (bl BackendList) Do(ctx context.Context, r *http.Request) error {
-	ctx, cancel := context.WithCancel(ctx)
+func (bl BackendList) Check(r *http.Request) bool {
+	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
 	var (
@@ -117,20 +116,17 @@ func (bl BackendList) Do(ctx context.Context, r *http.Request) error {
 	for _, backend := range bl {
 		wg.Add(1)
 
-		go func(b *Backend) {
+		go func(ctx context.Context, b *Backend) {
 			defer wg.Done()
-			if err := b.Do(ctx, r); err != nil {
+
+			if err := b.Do(ctx, r); err == nil {
 				allow.Store(true)
 				cancel()
 			}
-		}(backend)
+		}(ctx, backend)
 	}
 
 	wg.Wait()
 
-	if !allow.Load() {
-		return ErrNotAllowed
-	}
-
-	return nil
+	return allow.Load()
 }
